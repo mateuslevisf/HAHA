@@ -242,6 +242,7 @@ def eye_pos_to_gaze_obj(pos, state, mdp, p_idx):
 
 def map_eye_tracking_to_grid(eye_data, top_left_x, top_left_y, surface_size, tile_size, grid_shape, hud_size):
     grid_top_left = (top_left_x, top_left_y + hud_size)
+    individual_eye_gaze_samples = []
     heat_map = np.zeros(grid_shape)
     # +1 to make it inclusive to the total size
     x_bins = list(range(tile_size, surface_size[0] + 1, tile_size))
@@ -256,16 +257,17 @@ def map_eye_tracking_to_grid(eye_data, top_left_x, top_left_y, surface_size, til
         x_bin = np.digitize(x, x_bins)
         y_bin = np.digitize(y, y_bins)
         heat_map[x_bin][y_bin] += 1
+        individual_eye_gaze_samples.append( (x, y) )
 
     if np.max(heat_map) == 0:
         heat_map = np.full_like(heat_map, 1e-8)
     else:
         heat_map /= np.max(heat_map)
 
-    return heat_map
+    return heat_map, individual_eye_gaze_samples
 
 
-def combine_state_and_heatmap(state, heatmap, mdp, tile_size, hud_size, timestep, trial_id):
+def combine_state_and_heatmap(state, heatmap, eye_gaze_samples, mdp, tile_size, hud_size, timestep, trial_id):
     surface = StateVisualizer(tile_size=tile_size).render_state(state, grid=mdp.terrain_mtx,
                                                                 hud_data={"timestep": timestep})
     pil_string_image = pygame.image.tostring(surface, "RGBA", False)
@@ -279,9 +281,23 @@ def combine_state_and_heatmap(state, heatmap, mdp, tile_size, hud_size, timestep
             3] = heatmap[x][y] * 255
     heatmap_img = Image.fromarray(np.uint8(np.transpose(heatmap_img, (1, 0, 2))), "RGBA")
 
-    state_img = Image.alpha_composite(state_img, heatmap_img)
+    sample_img = np.zeros((*state_img.size, 4), dtype=int)
+    for sample in eye_gaze_samples:
+        x, y = sample
+        x, y = int(x), int(y)
+        y += hud_size
+        # print(sample_img.shape, x, y)
+        # sample_img[x - 5:x + 5, y - 5:y + 5, 0] = 255
+        sample_img[x - 10:x + 10, y - 10:y + 10, 3] = 255
+        sample_img[x - 10:x + 10, y - 10:y + 10, 0] = 255
+    sample_img = Image.fromarray(np.uint8(np.transpose(sample_img, (1, 0, 2))), "RGBA")
+
     Path(f'screenshots/').mkdir(parents=True, exist_ok=True)
-    state_img.save(f'screenshots/{trial_id}_{timestep}.png')
+    state_img.save(f'screenshots/heatmaps/{trial_id}_{timestep}_state.png')
+    sample_state_img = Image.alpha_composite(state_img, sample_img)
+    sample_state_img.save(f'screenshots/heatmaps/{trial_id}_{timestep}_samples.png')
+    hm_state_img = Image.alpha_composite(state_img, heatmap_img)
+    hm_state_img.save(f'screenshots/heatmaps/{trial_id}_{timestep}_heatmap.png')
 
 
 def create_heatmap(xdf_file):
@@ -292,19 +308,28 @@ def create_heatmap(xdf_file):
     # eye_data_df = eye_data_df[eye_data_df['avgX'].notnull()]
     eye_data_gen = eye_data_df.iterrows()
     _, prev_eye_row = next(eye_data_gen)
+    time, prev_time = None, None
 
     game_data_0 = json.loads(game_data_df.iloc[0]['GameEvents'])
-    mdp = OvercookedGridworld.from_layout_name(game_data_0['layout_name'])
-
     for index, row in game_data_df.iterrows():
+        prev_time = time
         time, game_str = row['Time'], row['GameEvents']
         game_data = json.loads(game_str)
+        if game_data['trial_id'] != 6:
+            continue
+        if game_data['cur_gameloop'] < 67 or game_data['cur_gameloop'] > 71:
+            continue
+        mdp = OvercookedGridworld.from_layout_name(game_data['layout_name'])
         state = OvercookedState.from_dict(json.loads(game_data['state']))
         eye_data = []
+
+
         # print(time)
 
         # NOTE, I should be looking until the start of the next state, rather than until the start of this state
         # so this is all off by 1
+        while prev_eye_row['Time'] <= time - 0.25:
+            _, prev_eye_row = next(eye_data_gen)
         while prev_eye_row['Time'] <= time:
             eye_data.append((prev_eye_row['AvgX'], prev_eye_row['AvgY']))
             _, prev_eye_row = next(eye_data_gen)
@@ -312,10 +337,10 @@ def create_heatmap(xdf_file):
         x, y, surface_size, tile_size, grid_shape, hud_size = game_data['dimension']
         hud_size = 50
         # tile_size, hud_size = game_data['dimension'][3], 50#game_data['dimension'][5]
-        heatmap = map_eye_tracking_to_grid(eye_data, x, y, surface_size, tile_size, grid_shape, hud_size)
-        combine_state_and_heatmap(state, heatmap, mdp, tile_size, hud_size, game_data['cur_gameloop'],
+        heatmap, iegs = map_eye_tracking_to_grid(eye_data, x, y, surface_size, tile_size, grid_shape, hud_size)
+        combine_state_and_heatmap(state, heatmap, iegs, mdp, tile_size, hud_size, game_data['cur_gameloop'],
                                   game_data['trial_id'])
-        # if index > 5:
+        # if game_data['cur_gameloop'] > 6:
         #     exit(0)
 
 
@@ -327,6 +352,11 @@ def contains_gaze_labels(files_in_folder):
 
 
 if __name__ == '__main__':
+    # if True:
+    #     create_heatmap('data/eye_tracking_data/CU/CU2025.xdf')
+    #     exit(0)
+
+
     root_directory = 'C:/Users/anthony.ries/OneDrive - US Army/Documents/MDrive/Experiments/OAI_eyetracking/Data/'
     player_metrics = {}
     for folder in os.listdir(root_directory):
