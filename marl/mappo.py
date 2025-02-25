@@ -5,17 +5,15 @@ This module implements Multi-Agent Proximal Policy Optimization (MAPPO) for trai
 HAHA managers with a centralized critic and decentralized actors.
 """
 
+import os
+import time
+import matplotlib.pyplot as plt
+from tqdm import tqdm
 import numpy as np
 import torch as th
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from copy import deepcopy
-from stable_baselines3.common.utils import explained_variance
-from stable_baselines3.common.buffers import RolloutBuffer
-from stable_baselines3.common.vec_env import VecEnv
-
-from oai_agents.agents.agent_utils import load_agent
 from oai_agents.common.subtasks import Subtasks
 
 
@@ -154,15 +152,40 @@ class RolloutStorage:
         # Convert all lists to PyTorch tensors
         data = {}
         for agent_idx in range(self.num_agents):
-            data[f'agent_{agent_idx}_obs'] = self.observations[agent_idx]
-            data[f'agent_{agent_idx}_action_masks'] = self.action_masks[agent_idx]
+            # Process observations correctly - convert visual_obs to tensors
+            agent_obs = []
+            for obs in self.observations[agent_idx]:
+                if 'visual_obs' in obs:
+                    # Make a copy and convert to tensor
+                    visual_obs = th.tensor(obs['visual_obs'], device=self.device).float()
+                    # Flatten for passing to network
+                    flattened_obs = visual_obs.reshape(1, -1).squeeze(0)
+                    agent_obs.append(flattened_obs)
+
+            data[f'agent_{agent_idx}_obs'] = th.stack(agent_obs) if agent_obs else []
+
+            # Process action masks correctly
+            agent_masks = []
+            for mask in self.action_masks[agent_idx]:
+                mask_tensor = th.tensor(mask, device=self.device).bool()
+                agent_masks.append(mask_tensor)
+
+            data[f'agent_{agent_idx}_action_masks'] = agent_masks if agent_masks else []
+
+            # Process other data
             data[f'agent_{agent_idx}_actions'] = th.tensor(self.actions[agent_idx], device=self.device)
             data[f'agent_{agent_idx}_log_probs'] = th.tensor(self.log_probs[agent_idx], device=self.device)
             data[f'agent_{agent_idx}_values'] = th.tensor(self.values[agent_idx], device=self.device)
             data[f'agent_{agent_idx}_returns'] = th.tensor(self.returns[agent_idx], device=self.device)
             data[f'agent_{agent_idx}_advantages'] = th.tensor(self.advantages[agent_idx], device=self.device)
 
-        data['centralized_obs'] = self.centralized_observations
+        # Process centralized observations for critic
+        cent_obs = []
+        for obs in self.centralized_observations:
+            cent_obs.append(th.tensor(obs, device=self.device).float())
+
+        data['centralized_obs'] = th.cat(cent_obs, dim=0) if cent_obs else []
+
         return data
 
     def clear(self):
@@ -230,21 +253,14 @@ class ActorNetwork(nn.Module):
         self.action_head = init_(nn.Linear(hidden_size, action_dim))
 
     def forward(self, obs, action_masks=None):
-        """
-        Forward pass through actor network
-
-        Args:
-            obs (torch.Tensor): Observation tensor
-            action_masks (torch.Tensor, optional): Boolean mask for valid actions
-
-        Returns:
-            torch.distributions.Categorical: Action distribution
-        """
         features = self.base(obs)
         action_logits = self.action_head(features)
 
         # Apply action mask
         if action_masks is not None:
+            # Ensure action_masks has same dimensions as action_logits
+            if action_masks.dim() < action_logits.dim():
+                action_masks = action_masks.unsqueeze(0)
             action_logits[~action_masks] = -1e10
 
         return th.distributions.Categorical(logits=action_logits)
@@ -274,10 +290,10 @@ class CriticNetwork(nn.Module):
         Forward pass through critic network
 
         Args:
-            obs (torch.Tensor): Centralized observation tensor
+            obs (th.Tensor): Centralized observation tensor
 
         Returns:
-            torch.Tensor: Value estimate
+            th.Tensor: Value estimate
         """
         features = self.base(obs)
         return self.value_head(features)
@@ -345,7 +361,7 @@ class MAPPOPolicy:
         Sample an action from the policy given an observation
 
         Args:
-            obs: Observation tensor
+            obs: Observation dictionary from environment
             action_mask: Boolean mask for valid actions
             deterministic: Whether to return the mode of the distribution
 
@@ -354,18 +370,27 @@ class MAPPOPolicy:
             log_prob: Log probability of the action
             entropy: Entropy of the distribution
         """
-        # Flatten observation if necessary
-        if isinstance(obs, dict):
-            if 'visual_obs' in obs:
-                obs_tensor = th.tensor(obs['visual_obs'], device=self.device).float().view(1, -1)
-            else:
-                raise ValueError("Unsupported observation format")
-        else:
-            obs_tensor = th.tensor(obs, device=self.device).float().view(1, -1)
-
         # Convert action mask to tensor if provided
         if action_mask is not None:
             action_mask = th.tensor(action_mask, device=self.device).bool()
+            # Add batch dimension if needed
+            if action_mask.dim() == 1:
+                action_mask = action_mask.unsqueeze(0)
+        elif 'subtask_mask' in obs:
+            action_mask = th.tensor(obs['subtask_mask'], device=self.device).bool()
+            # Add batch dimension if needed
+            if action_mask.dim() == 1:
+                action_mask = action_mask.unsqueeze(0)
+
+        # Get visual observation and convert to tensor
+        if 'visual_obs' in obs:
+            # Create a copy to avoid stride issues
+            visual_obs = np.ascontiguousarray(obs['visual_obs'])
+            obs_tensor = th.tensor(visual_obs, device=self.device).float()
+            # Flatten for feeding into the network
+            obs_tensor = obs_tensor.reshape(1, -1) if len(obs_tensor.shape) == 3 else obs_tensor
+        else:
+            raise ValueError("Unsupported observation format")
 
         # Get action distribution
         with th.no_grad():
@@ -395,8 +420,17 @@ class MAPPOPolicy:
             log_probs: Log probabilities of actions
             entropy: Entropy of the distribution
         """
+        # Process action masks
+        processed_masks = None
+        if action_masks and len(action_masks) > 0:
+            if len(action_masks) == len(obs):
+                processed_masks = action_masks
+            else:
+                # Handle mismatch in batch sizes
+                processed_masks = action_masks[:len(obs)]
+
         # Get action distribution
-        dist = self.actor(obs, action_masks)
+        dist = self.actor(obs, processed_masks)
 
         # Calculate log probabilities and entropy
         log_probs = dist.log_prob(actions)
@@ -446,29 +480,30 @@ class MAPPOPolicy:
         # Normalize advantages
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
-        # Flatten everything for mini-batch updates
-        # (This could be modified to process in mini-batches)
+        # Re-evaluate actions - make sure obs and action_masks are properly processed
+        if len(obs) > 0:  # Make sure there are observations
+            log_probs, entropy = self.evaluate_actions(obs, actions, action_masks)
 
-        # Re-evaluate actions
-        log_probs, entropy = self.evaluate_actions(obs, actions, action_masks)
+            # Calculate PPO loss
+            ratio = th.exp(log_probs - old_log_probs)
+            surr1 = ratio * advantages
+            surr2 = th.clamp(ratio, 1.0 - clip_range, 1.0 + clip_range) * advantages
 
-        # Calculate PPO loss
-        ratio = th.exp(log_probs - old_log_probs)
-        surr1 = ratio * advantages
-        surr2 = th.clamp(ratio, 1.0 - clip_range, 1.0 + clip_range) * advantages
+            # Actor loss (negative because we're maximizing)
+            actor_loss = -th.min(surr1, surr2).mean()
 
-        # Actor loss (negative because we're maximizing)
-        actor_loss = -th.min(surr1, surr2).mean()
+            # Update actor
+            self.actor_optimizer.zero_grad()
+            total_loss = actor_loss - entropy_coef * entropy
+            total_loss.backward()
+            # Clip gradient norm
+            th.nn.utils.clip_grad_norm_(self.actor.parameters(), max_norm=0.5)
+            self.actor_optimizer.step()
 
-        # Update actor
-        self.actor_optimizer.zero_grad()
-        total_loss = actor_loss - entropy_coef * entropy
-        total_loss.backward()
-        # Clip gradient norm
-        th.nn.utils.clip_grad_norm_(self.actor.parameters(), max_norm=0.5)
-        self.actor_optimizer.step()
-
-        return actor_loss.item(), entropy.item()
+            return actor_loss.item(), entropy.item()
+        else:
+            # Return zeros if no data
+            return 0.0, 0.0
 
     def update_critic(self, centralized_obs, returns, clip_range=0.2, value_loss_coef=0.5):
         """
@@ -503,7 +538,7 @@ class MAPPOPolicy:
 
 class MAPPOTrainer:
     """
-    MAPPO Trainer for HAHA managers
+    MAPPO Trainer for HAHA managers with improved monitoring
     """
     def __init__(self, env, worker_a, worker_b, args, hidden_size=64, lr_actor=3e-4,
                  lr_critic=3e-4, buffer_size=2048, gamma=0.99, gae_lambda=0.95):
@@ -561,6 +596,21 @@ class MAPPOTrainer:
         self.episode_rewards = []
         self.episode_lengths = []
 
+        # New monitoring attributes
+        self.training_metrics = {
+            'iterations': [],
+            'mean_rewards': [],
+            'actor_loss_a': [],
+            'actor_loss_b': [],
+            'critic_loss': [],
+            'entropy_a': [],
+            'entropy_b': []
+        }
+
+        # Create logs directory
+        self.logs_dir = os.path.join('marl', 'logs')
+        os.makedirs(self.logs_dir, exist_ok=True)
+
     def collect_rollouts(self, n_steps=None):
         """
         Collect rollouts by interacting with the environment
@@ -585,6 +635,7 @@ class MAPPOTrainer:
         episode_rewards = [0, 0]
         episode_length = 0
         completed_episodes = 0
+        episode_reward_history = []
 
         for step in range(n_steps):
             # Get action masks
@@ -658,8 +709,10 @@ class MAPPOTrainer:
 
             # If episode finished, reset environment
             if done:
-                self.episode_rewards.append(sum(episode_rewards) / 2)  # Average team reward
+                team_reward = sum(episode_rewards) / 2  # Average team reward
+                self.episode_rewards.append(team_reward)
                 self.episode_lengths.append(episode_length)
+                episode_reward_history.append(team_reward)
 
                 # Reset environment
                 obs = self.env.reset()
@@ -709,7 +762,7 @@ class MAPPOTrainer:
 
         # Return average episode reward if any episodes completed
         if completed_episodes > 0:
-            return sum(self.episode_rewards[-completed_episodes:]) / completed_episodes
+            return sum(episode_reward_history) / completed_episodes
         else:
             return 0
 
@@ -778,9 +831,49 @@ class MAPPOTrainer:
 
         return metrics
 
+    def save_training_metrics(self):
+        """Save training metrics as plots"""
+        # Create figure for rewards
+        plt.figure(figsize=(10, 6))
+        plt.plot(self.training_metrics['iterations'], self.training_metrics['mean_rewards'], 'b-')
+        plt.title('Mean Reward per Iteration')
+        plt.xlabel('Iterations')
+        plt.ylabel('Mean Reward')
+        plt.grid(True)
+        plt.savefig(os.path.join(self.logs_dir, 'mean_rewards.png'))
+        plt.close()
+
+        # Create figure for losses
+        plt.figure(figsize=(10, 6))
+        plt.plot(self.training_metrics['iterations'], self.training_metrics['actor_loss_a'], 'r-', label='Actor A Loss')
+        plt.plot(self.training_metrics['iterations'], self.training_metrics['actor_loss_b'], 'g-', label='Actor B Loss')
+        plt.plot(self.training_metrics['iterations'], self.training_metrics['critic_loss'], 'b-', label='Critic Loss')
+        plt.title('Training Losses')
+        plt.xlabel('Iterations')
+        plt.ylabel('Loss')
+        plt.legend()
+        plt.grid(True)
+        plt.savefig(os.path.join(self.logs_dir, 'training_losses.png'))
+        plt.close()
+
+        # Create figure for entropy
+        plt.figure(figsize=(10, 6))
+        plt.plot(self.training_metrics['iterations'], self.training_metrics['entropy_a'], 'r-', label='Entropy A')
+        plt.plot(self.training_metrics['iterations'], self.training_metrics['entropy_b'], 'g-', label='Entropy B')
+        plt.title('Policy Entropy')
+        plt.xlabel('Iterations')
+        plt.ylabel('Entropy')
+        plt.legend()
+        plt.grid(True)
+        plt.savefig(os.path.join(self.logs_dir, 'policy_entropy.png'))
+        plt.close()
+
+        # Save raw data as numpy arrays for later analysis
+        np.save(os.path.join(self.logs_dir, 'training_metrics.npy'), self.training_metrics)
+
     def train(self, total_timesteps, log_interval=100, eval_interval=1000):
         """
-        Train the MAPPO policies
+        Train the MAPPO policies with tqdm progress tracking and visualization
 
         Args:
             total_timesteps: Total number of timesteps to train for
@@ -793,6 +886,13 @@ class MAPPOTrainer:
         timesteps_so_far = 0
         iterations = 0
 
+        # Set up progress bar for total training
+        pbar = tqdm(total=total_timesteps, desc="Training Progress",
+                    unit="steps", ncols=100)
+
+        # Track start time
+        start_time = time.time()
+
         while timesteps_so_far < total_timesteps:
             # Collect rollouts
             mean_reward = self.collect_rollouts()
@@ -801,21 +901,50 @@ class MAPPOTrainer:
             # Update policies
             metrics = self.update()
 
+            # Store metrics
+            self.training_metrics['iterations'].append(iterations)
+            self.training_metrics['mean_rewards'].append(mean_reward)
+            self.training_metrics['actor_loss_a'].append(metrics['actor_loss_a'])
+            self.training_metrics['actor_loss_b'].append(metrics['actor_loss_b'])
+            self.training_metrics['critic_loss'].append(metrics['critic_loss'])
+            self.training_metrics['entropy_a'].append(metrics['entropy_a'])
+            self.training_metrics['entropy_b'].append(metrics['entropy_b'])
+
+            # Update progress bar
+            pbar.update(self.buffer_size)
+            pbar.set_postfix({
+                'reward': f"{mean_reward:.2f}",
+                'a_loss': f"{metrics['actor_loss_a']:.4f}",
+                'c_loss': f"{metrics['critic_loss']:.4f}"
+            })
+
             # Log metrics
             if iterations % log_interval == 0:
-                print(f"Iteration {iterations}, Steps: {timesteps_so_far}/{total_timesteps}")
+                elapsed_time = time.time() - start_time
+                steps_per_sec = timesteps_so_far / elapsed_time
+
+                print(f"\nIteration {iterations}, Steps: {timesteps_so_far}/{total_timesteps}")
                 print(f"Mean reward: {mean_reward:.2f}")
                 print(f"Actor loss (A): {metrics['actor_loss_a']:.4f}, Actor loss (B): {metrics['actor_loss_b']:.4f}")
                 print(f"Critic loss: {metrics['critic_loss']:.4f}")
                 print(f"Entropy (A): {metrics['entropy_a']:.4f}, Entropy (B): {metrics['entropy_b']:.4f}")
+                print(f"Steps/sec: {steps_per_sec:.2f}, Estimated time remaining: {(total_timesteps - timesteps_so_far) / steps_per_sec / 60:.2f} minutes")
                 print("-" * 50)
 
-            # Evaluate if needed
-            if iterations % eval_interval == 0:
-                # Implement evaluation if needed
-                pass
+                # Save intermediate plots
+                if iterations > 0:
+                    self.save_training_metrics()
 
             iterations += 1
+
+        # Close progress bar
+        pbar.close()
+
+        # Final save of training metrics
+        self.save_training_metrics()
+
+        print(f"\nTraining completed in {(time.time() - start_time) / 60:.2f} minutes")
+        print(f"Final mean reward: {self.training_metrics['mean_rewards'][-1]:.2f}")
 
         return self.policies
 
@@ -836,6 +965,19 @@ class MAPPOTrainer:
         # Save centralized critic
         th.save(self.policies[0].critic.state_dict(), os.path.join(path, "critic.pt"))
 
+        # Save training metrics plots in the same directory
+        plt.figure(figsize=(10, 6))
+        plt.plot(self.training_metrics['iterations'], self.training_metrics['mean_rewards'], 'b-')
+        plt.title('Mean Reward per Iteration')
+        plt.xlabel('Iterations')
+        plt.ylabel('Mean Reward')
+        plt.grid(True)
+        plt.savefig(os.path.join(path, 'mean_rewards.png'))
+        plt.close()
+
+        # Save raw metrics data
+        np.save(os.path.join(path, 'training_metrics.npy'), self.training_metrics)
+
     def load(self, path):
         """
         Load the policies from disk
@@ -851,3 +993,8 @@ class MAPPOTrainer:
 
         # Load centralized critic
         self.policies[0].critic.load_state_dict(th.load(os.path.join(path, "critic.pt"), map_location=self.device))
+
+        # Try to load training metrics if they exist
+        metrics_path = os.path.join(path, 'training_metrics.npy')
+        if os.path.exists(metrics_path):
+            self.training_metrics = np.load(metrics_path, allow_pickle=True).item()

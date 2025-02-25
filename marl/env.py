@@ -2,18 +2,14 @@
 Multi-Agent environment for training HAHA managers using MAPPO.
 This environment adapts OvercookedGymEnv to simultaneously train two manager agents.
 """
-
-from oai_agents.gym_environments.base_overcooked_env import OvercookedGymEnv
-from oai_agents.common.subtasks import Subtasks, get_doable_subtasks
-from oai_agents.common.constants import USEABLE_COUNTERS
-
-from overcooked_ai_py.mdp.overcooked_mdp import Action, Direction
-
-import gym
-from gym import spaces
-import numpy as np
-import torch as th
 from copy import deepcopy
+from gym import spaces
+import torch as th
+
+from overcooked_ai_py.mdp.overcooked_mdp import Action
+
+from oai_agents.gym_environments.base_overcooked_env import USEABLE_COUNTERS, OvercookedGymEnv
+from oai_agents.common.subtasks import Subtasks, get_doable_subtasks
 
 
 class MAHAHAEnv(OvercookedGymEnv):

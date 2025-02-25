@@ -9,6 +9,9 @@ import os
 import torch as th
 import numpy as np
 from pathlib import Path
+import matplotlib.pyplot as plt
+from tqdm import tqdm
+import datetime
 
 from oai_agents.common.arguments import get_arguments
 from oai_agents.agents.agent_utils import load_agent
@@ -21,8 +24,8 @@ from marl.mappo import MAPPOTrainer
 
 # ===== HARDCODED PARAMETERS =====
 # Paths for pre-trained worker models
-WORKER_A_PATH = 'agent_models_ICML/fcp_61/worker' # REPLACE WITH ACTUAL PATH
-WORKER_B_PATH = 'agent_models_ICML/fcp_61/worker'   # REPLACE WITH ACTUAL PATH
+WORKER_A_PATH = 'agent_models_ICML/HAHA_fcp_61/worker' # REPLACE WITH ACTUAL PATH
+WORKER_B_PATH = 'agent_models_ICML/HAHA_fcp_61/worker'   # REPLACE WITH ACTUAL PATH
 
 # Training parameters
 HIDDEN_SIZE = 64
@@ -32,6 +35,7 @@ BUFFER_SIZE = 2048
 GAMMA = 0.99
 GAE_LAMBDA = 0.95
 TOTAL_TIMESTEPS = 1_000_000
+LAYOUT_NAME = "cramped_room"
 
 # Logging and evaluation
 LOG_INTERVAL = 10
@@ -93,7 +97,18 @@ def create_haha_from_mappo_policy(worker, policy, args, name="haha_mappo"):
 
 
 def main():
+    # Create timestamp for this run
+    timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    run_dir = os.path.join(SAVE_DIR, f"run_{timestamp}")
+    os.makedirs(run_dir, exist_ok=True)
+
+    # Create logs directory
+    logs_dir = os.path.join('marl', 'logs', timestamp)
+    os.makedirs(logs_dir, exist_ok=True)
+
     print("Starting HAHA Manager MAPPO training...")
+    print(f"Logs will be saved to {logs_dir}")
+    print(f"Model checkpoints will be saved to {run_dir}")
 
     # Get default arguments from the codebase
     args = get_arguments()
@@ -108,7 +123,21 @@ def main():
     args.total_timesteps = TOTAL_TIMESTEPS
     args.log_interval = LOG_INTERVAL
     args.eval_interval = EVAL_INTERVAL
-    args.save_dir = SAVE_DIR
+    args.save_dir = run_dir
+
+    # Save configuration
+    with open(os.path.join(logs_dir, 'config.txt'), 'w') as f:
+        f.write(f"Training configuration:\n")
+        f.write(f"- Worker A path: {WORKER_A_PATH}\n")
+        f.write(f"- Worker B path: {WORKER_B_PATH}\n")
+        f.write(f"- Hidden size: {HIDDEN_SIZE}\n")
+        f.write(f"- Actor learning rate: {LR_ACTOR}\n")
+        f.write(f"- Critic learning rate: {LR_CRITIC}\n")
+        f.write(f"- Buffer size: {BUFFER_SIZE}\n")
+        f.write(f"- Gamma: {GAMMA}\n")
+        f.write(f"- GAE Lambda: {GAE_LAMBDA}\n")
+        f.write(f"- Total timesteps: {TOTAL_TIMESTEPS}\n")
+        f.write(f"- Layout: {LAYOUT_NAME}\n")
 
     # Load pre-trained worker models
     print(f"Loading worker model A from: {WORKER_A_PATH}")
@@ -126,7 +155,8 @@ def main():
         shape_rewards=False,
         stack_frames=False,
         is_eval_env=False,
-        horizon=args.horizon
+        horizon=args.horizon,
+        layout_name=LAYOUT_NAME
     )
 
     # Create MAPPO trainer
@@ -153,21 +183,63 @@ def main():
     )
 
     # Save the trained policies
-    save_path = Path(args.save_dir)
-    save_path.mkdir(parents=True, exist_ok=True)
-
-    print(f"Saving trained policies to {save_path}...")
-    trainer.save(save_path)
+    print(f"Saving trained policies to {run_dir}...")
+    trainer.save(run_dir)
 
     # Create HAHA agents with trained managers
     haha_a = create_haha_from_mappo_policy(worker_a, trainer.policies[0], args, name="haha_mappo_a")
     haha_b = create_haha_from_mappo_policy(worker_b, trainer.policies[1], args, name="haha_mappo_b")
 
     # Save the HAHA agents
-    haha_a.save(save_path / "haha_a")
-    haha_b.save(save_path / "haha_b")
+    haha_a.save(Path(run_dir) / "haha_a")
+    haha_b.save(Path(run_dir) / "haha_b")
+
+    # Create final summary plot
+    plt.figure(figsize=(15, 10))
+
+    # Mean rewards subplot
+    plt.subplot(2, 2, 1)
+    plt.plot(trainer.training_metrics['iterations'], trainer.training_metrics['mean_rewards'], 'b-')
+    plt.title('Mean Reward per Iteration')
+    plt.xlabel('Iterations')
+    plt.ylabel('Mean Reward')
+    plt.grid(True)
+
+    # Actor loss subplot
+    plt.subplot(2, 2, 2)
+    plt.plot(trainer.training_metrics['iterations'], trainer.training_metrics['actor_loss_a'], 'r-', label='Actor A')
+    plt.plot(trainer.training_metrics['iterations'], trainer.training_metrics['actor_loss_b'], 'g-', label='Actor B')
+    plt.title('Actor Losses')
+    plt.xlabel('Iterations')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.grid(True)
+
+    # Critic loss subplot
+    plt.subplot(2, 2, 3)
+    plt.plot(trainer.training_metrics['iterations'], trainer.training_metrics['critic_loss'], 'b-')
+    plt.title('Critic Loss')
+    plt.xlabel('Iterations')
+    plt.ylabel('Loss')
+    plt.grid(True)
+
+    # Entropy subplot
+    plt.subplot(2, 2, 4)
+    plt.plot(trainer.training_metrics['iterations'], trainer.training_metrics['entropy_a'], 'r-', label='Agent A')
+    plt.plot(trainer.training_metrics['iterations'], trainer.training_metrics['entropy_b'], 'g-', label='Agent B')
+    plt.title('Policy Entropy')
+    plt.xlabel('Iterations')
+    plt.ylabel('Entropy')
+    plt.legend()
+    plt.grid(True)
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(run_dir, 'training_summary.png'))
+    plt.savefig(os.path.join(logs_dir, 'training_summary.png'))
+    plt.close()
 
     print("Training complete!")
+    print(f"All logs and models saved to {run_dir}")
     return haha_a, haha_b
 
 
