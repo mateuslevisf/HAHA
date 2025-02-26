@@ -85,6 +85,10 @@ class OvercookedGymEnv(Env):
         self.p_idx = None
         self.joint_action = [None, None]
         self.deterministic = deterministic
+
+        self.prev_actions = None
+
+        print("OvercookedGymEnv initialized with enc_fn: ", enc_fn)
         if full_init:
             self.set_env_layout(**kwargs)
 

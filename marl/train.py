@@ -6,17 +6,14 @@ Uses hardcoded parameters rather than command line arguments.
 """
 
 import os
-import torch as th
-import numpy as np
 from pathlib import Path
-import matplotlib.pyplot as plt
-from tqdm import tqdm
 import datetime
+import torch as th
+import matplotlib.pyplot as plt
 
 from oai_agents.common.arguments import get_arguments
 from oai_agents.agents.agent_utils import load_agent
 from oai_agents.agents.hrl import HierarchicalRL
-from oai_agents.common.subtasks import Subtasks
 
 from marl.env import MAHAHAEnv
 from marl.mappo import MAPPOTrainer
@@ -59,6 +56,27 @@ def create_haha_from_mappo_policy(worker, policy, args, name="haha_mappo"):
     """
     # Create a wrapper for the MAPPO policy that matches the HierarchicalRL manager interface
     class MAPPOPolicyWrapper:
+        """
+        A wrapper class for the MAPPO policy to handle prediction with optional action masks.
+        Attributes:
+            policy: The policy object containing the actor network.
+            actor: The actor network extracted from the policy.
+        Methods:
+            __init__(policy):
+                Initializes the MAPPOPolicyWrapper with the given policy.
+            predict(obs, deterministic=False):
+                Predicts an action based on the given observation.
+                Args:
+                    obs (dict): A dictionary containing the observation data. Must contain 'visual_obs' key.
+                                Optionally, it can contain 'subtask_mask' key for action masking.
+                    deterministic (bool): If True, selects the action with the highest probability.
+                                          If False, samples an action from the distribution.
+                Returns:
+                    numpy.ndarray: The predicted action.
+                Raises:
+                    ValueError: If the observation format is unsupported.
+        """
+
         def __init__(self, policy):
             self.policy = policy
             self.actor = policy.actor
@@ -126,8 +144,8 @@ def main():
     args.save_dir = run_dir
 
     # Save configuration
-    with open(os.path.join(logs_dir, 'config.txt'), 'w') as f:
-        f.write(f"Training configuration:\n")
+    with open(os.path.join(logs_dir, 'config.txt'), 'w', encoding='utf-8') as f:
+        f.write("Training configuration:\n")
         f.write(f"- Worker A path: {WORKER_A_PATH}\n")
         f.write(f"- Worker B path: {WORKER_B_PATH}\n")
         f.write(f"- Hidden size: {HIDDEN_SIZE}\n")
@@ -207,8 +225,14 @@ def main():
 
     # Actor loss subplot
     plt.subplot(2, 2, 2)
-    plt.plot(trainer.training_metrics['iterations'], trainer.training_metrics['actor_loss_a'], 'r-', label='Actor A')
-    plt.plot(trainer.training_metrics['iterations'], trainer.training_metrics['actor_loss_b'], 'g-', label='Actor B')
+    plt.plot(trainer.training_metrics['iterations'],
+             trainer.training_metrics['actor_loss_a'],
+             'r-',
+             label='Actor A')
+    plt.plot(trainer.training_metrics['iterations'],
+             trainer.training_metrics['actor_loss_b'],
+             'g-',
+             label='Actor B')
     plt.title('Actor Losses')
     plt.xlabel('Iterations')
     plt.ylabel('Loss')
@@ -225,8 +249,14 @@ def main():
 
     # Entropy subplot
     plt.subplot(2, 2, 4)
-    plt.plot(trainer.training_metrics['iterations'], trainer.training_metrics['entropy_a'], 'r-', label='Agent A')
-    plt.plot(trainer.training_metrics['iterations'], trainer.training_metrics['entropy_b'], 'g-', label='Agent B')
+    plt.plot(trainer.training_metrics['iterations'],
+             trainer.training_metrics['entropy_a'],
+             'r-',
+             label='Agent A')
+    plt.plot(trainer.training_metrics['iterations'],
+             trainer.training_metrics['entropy_b'],
+             'g-',
+             label='Agent B')
     plt.title('Policy Entropy')
     plt.xlabel('Iterations')
     plt.ylabel('Entropy')
