@@ -11,7 +11,6 @@ from overcooked_ai_py.mdp.overcooked_mdp import Action
 from oai_agents.gym_environments.base_overcooked_env import USEABLE_COUNTERS, OvercookedGymEnv
 from oai_agents.common.subtasks import Subtasks, get_doable_subtasks
 
-
 class MAHAHAEnv(OvercookedGymEnv):
     """
     Multi-Agent environment for training HAHA managers using MAPPO.
@@ -51,10 +50,11 @@ class MAHAHAEnv(OvercookedGymEnv):
         self.action_space = spaces.Discrete(Subtasks.NUM_SUBTASKS)
 
         # Current subtasks being executed by each agent
-        self.curr_subtasks = [Subtasks.SUBTASKS_TO_IDS['unknown'], Subtasks.SUBTASKS_TO_IDS['unknown']]
+        unknown_subtask = Subtasks.SUBTASKS_TO_IDS['unknown']
+        self.curr_subtasks = [unknown_subtask, unknown_subtask]
 
         # Store previous step's subtasks for action masking
-        self.prev_subtasks = [Subtasks.SUBTASKS_TO_IDS['unknown'], Subtasks.SUBTASKS_TO_IDS['unknown']]
+        self.prev_subtasks = [unknown_subtask, unknown_subtask]
 
         # Add an observation field for goal objects
         if 'visual_obs' in self.obs_dict:
@@ -71,6 +71,7 @@ class MAHAHAEnv(OvercookedGymEnv):
 
         # Initialize centralized observation space
         self._setup_centralized_spaces()
+        self.state = None
 
     def _setup_centralized_spaces(self):
         """
@@ -119,22 +120,12 @@ class MAHAHAEnv(OvercookedGymEnv):
         return obs
 
     def get_centralized_obs(self):
-        """
-        Get a centralized observation that combines information from both agents.
-        Used by the centralized critic in MAPPO.
-        """
-        obs_a = self.get_obs_for_agent(0)
-        obs_b = self.get_obs_for_agent(1)
-
-        # Centralized observation contains both agents' observations and their current subtasks
+        # Only include the full state and current subtasks
         cent_obs = {
-            'agent_0_obs': obs_a,
-            'agent_1_obs': obs_b,
             'agent_0_subtask': self.curr_subtasks[0],
             'agent_1_subtask': self.curr_subtasks[1],
-            'state': self.state  # Include full state information
+            'state': self.state
         }
-
         return cent_obs
 
     def step(self, joint_subtasks):
@@ -161,7 +152,7 @@ class MAHAHAEnv(OvercookedGymEnv):
         subtask_completed = [False, False]
 
         # Execute workers for up to max_worker_steps or until both subtasks are completed
-        for step in range(self.max_worker_steps):
+        for _ in range(self.max_worker_steps):
             # Only execute worker for agents with non-completed subtasks
             for p_idx in [0, 1]:
                 if subtask_completed[p_idx]:
@@ -256,8 +247,9 @@ class MAHAHAEnv(OvercookedGymEnv):
         super().reset()
 
         # Reset subtasks
-        self.curr_subtasks = [Subtasks.SUBTASKS_TO_IDS['unknown'], Subtasks.SUBTASKS_TO_IDS['unknown']]
-        self.prev_subtasks = [Subtasks.SUBTASKS_TO_IDS['unknown'], Subtasks.SUBTASKS_TO_IDS['unknown']]
+        unknown_subtask = Subtasks.SUBTASKS_TO_IDS['unknown']
+        self.curr_subtasks = [unknown_subtask, unknown_subtask]
+        self.prev_subtasks = [unknown_subtask, unknown_subtask]
 
         # Reset rewards
         self.agent_rewards = [0, 0]
