@@ -16,7 +16,7 @@ from oai_agents.agents.agent_utils import load_agent
 from oai_agents.agents.hrl import HierarchicalRL
 
 from marl.env import MAHAHAEnv
-from marl.mappo import MAPPOTrainer
+from marl.mappo.trainer import MAPPOTrainer
 
 
 # ===== HARDCODED PARAMETERS =====
