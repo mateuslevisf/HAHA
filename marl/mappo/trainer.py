@@ -134,9 +134,9 @@ class MAPPOTrainer:
 
             # Prepare centralized observations for value estimation
             # Flatten and concatenate observations and subtasks
-            if isinstance(cent_obs['agent_0_obs'], dict) and 'visual_obs' in cent_obs['agent_0_obs']:
-                flat_obs_a = cent_obs['agent_0_obs']['visual_obs'].reshape(-1)
-                flat_obs_b = cent_obs['agent_1_obs']['visual_obs'].reshape(-1)
+            if isinstance(obs_a, dict) and 'visual_obs' in obs_a:
+                flat_obs_a = obs_a['visual_obs'].reshape(-1)
+                flat_obs_b = obs_b['visual_obs'].reshape(-1)
             else:
                 raise ValueError("Unsupported observation format")
 
@@ -206,9 +206,9 @@ class MAPPOTrainer:
 
         # After collecting rollouts, compute returns and advantages
         # Get final value estimates for bootstrapping
-        if isinstance(cent_obs['agent_0_obs'], dict) and 'visual_obs' in cent_obs['agent_0_obs']:
-            flat_obs_a = cent_obs['agent_0_obs']['visual_obs'].reshape(-1)
-            flat_obs_b = cent_obs['agent_1_obs']['visual_obs'].reshape(-1)
+        if isinstance(obs_a, dict) and 'visual_obs' in obs_a:
+            flat_obs_a = obs_a['visual_obs'].reshape(-1)
+            flat_obs_b = obs_b['visual_obs'].reshape(-1)
         else:
             raise ValueError("Unsupported observation format")
 
@@ -256,7 +256,7 @@ class MAPPOTrainer:
         rollout_data = self.rollout_storage.get_data()
 
         # Process centralized observations for critic update
-        centralized_obs = th.cat(rollout_data['centralized_obs'], dim=0)
+        centralized_obs = rollout_data['centralized_obs']
 
         # Get returns for both agents
         returns_a = rollout_data['agent_0_returns']

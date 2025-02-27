@@ -1,4 +1,5 @@
 import torch as th
+import numpy as np
 
 class RolloutStorage:
     """
@@ -140,7 +141,7 @@ class RolloutStorage:
             for obs in self.observations[agent_idx]:
                 if 'visual_obs' in obs:
                     # Make a copy and convert to tensor
-                    visual_obs = th.tensor(obs['visual_obs'], device=self.device).float()
+                    visual_obs = th.tensor(np.ascontiguousarray(obs['visual_obs']), device=self.device).float()
                     # Flatten for passing to network
                     flattened_obs = visual_obs.reshape(1, -1).squeeze(0)
                     agent_obs.append(flattened_obs)
@@ -167,7 +168,14 @@ class RolloutStorage:
         for obs in self.centralized_observations:
             cent_obs.append(th.tensor(obs, device=self.device).float())
 
-        data['centralized_obs'] = th.cat(cent_obs, dim=0) if cent_obs else []
+        # Always return a tensor (with appropriate dimensions if empty)
+        if cent_obs:
+            data['centralized_obs'] = th.cat(cent_obs, dim=0)
+        else:
+            # Create an empty tensor with proper shape
+            # Adjust the shape based on your observation dimensions
+            print("should be using obs dim here TODO FIX")
+            data['centralized_obs'] = th.zeros((0, 0), device=self.device)
 
         return data
 
