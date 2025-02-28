@@ -159,14 +159,18 @@ class RolloutStorage:
             # Process other data
             data[f'agent_{agent_idx}_actions'] = th.tensor(self.actions[agent_idx], device=self.device)
             data[f'agent_{agent_idx}_log_probs'] = th.tensor(self.log_probs[agent_idx], device=self.device)
-            data[f'agent_{agent_idx}_values'] = th.tensor(self.values[agent_idx], device=self.device)
+            values_array = np.array(self.values[agent_idx])
+            data[f'agent_{agent_idx}_values'] = th.tensor(values_array, device=self.device)
             data[f'agent_{agent_idx}_returns'] = th.tensor(self.returns[agent_idx], device=self.device)
             data[f'agent_{agent_idx}_advantages'] = th.tensor(self.advantages[agent_idx], device=self.device)
 
         # Process centralized observations for critic
         cent_obs = []
         for obs in self.centralized_observations:
-            cent_obs.append(th.tensor(obs, device=self.device).float())
+            if isinstance(obs, th.Tensor):
+                cent_obs.append(obs.clone().detach().to(device=self.device).float())
+            else:
+                cent_obs.append(th.tensor(obs, device=self.device).float())
 
         # Always return a tensor (with appropriate dimensions if empty)
         if cent_obs:

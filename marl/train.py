@@ -26,6 +26,10 @@ from argparse import Namespace
 # Add just the needed class to safe globals
 torch.serialization.add_safe_globals([SB3Wrapper, PPO, Namespace, PosixPath])
 
+import warnings
+warnings.filterwarnings("ignore", category=FutureWarning,
+                       message="You are using `torch.load` with `weights_only=False`")
+
 
 # ===== HARDCODED PARAMETERS =====
 # Paths for pre-trained worker models
