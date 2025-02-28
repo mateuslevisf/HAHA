@@ -6,9 +6,10 @@ Uses hardcoded parameters rather than command line arguments.
 """
 
 import os
-from pathlib import Path
+from pathlib import Path, PosixPath
 import datetime
 import torch as th
+import torch.serialization
 import matplotlib.pyplot as plt
 
 from oai_agents.common.arguments import get_arguments
@@ -17,6 +18,13 @@ from oai_agents.agents.hrl import HierarchicalRL
 
 from marl.env import MAHAHAEnv
 from marl.mappo.trainer import MAPPOTrainer
+
+from oai_agents.agents.base_agent import SB3Wrapper
+from stable_baselines3.ppo.ppo import PPO
+from argparse import Namespace
+
+# Add just the needed class to safe globals
+torch.serialization.add_safe_globals([SB3Wrapper, PPO, Namespace, PosixPath])
 
 
 # ===== HARDCODED PARAMETERS =====

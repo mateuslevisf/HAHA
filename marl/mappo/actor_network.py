@@ -25,9 +25,9 @@ class ActorNetwork(nn.Module):
         features = self.base(obs)
         action_logits = self.action_head(features)
 
-        # Apply action mask
+        # Apply action mask if provided - action mask should be tensors
         if action_masks is not None:
-            # Ensure action_masks has same dimensions as action_logits
+            # Ensure dimensions match
             if action_masks.dim() < action_logits.dim():
                 action_masks = action_masks.unsqueeze(0)
             action_logits[~action_masks] = -1e10

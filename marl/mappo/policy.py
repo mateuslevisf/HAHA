@@ -119,24 +119,23 @@ class MAPPOPolicy:
     def evaluate_actions(self, obs, actions, action_masks=None):
         """
         Evaluate log probability and entropy of given actions
-
-        Args:
-            obs: Observation tensor
-            actions: Actions to evaluate
-            action_masks: Boolean masks for valid actions
-
-        Returns:
-            log_probs: Log probabilities of actions
-            entropy: Entropy of the distribution
         """
-        # Process action masks
+        # Process action masks - ensure we have a tensor
         processed_masks = None
-        if action_masks and len(action_masks) > 0:
-            if len(action_masks) == len(obs):
-                processed_masks = action_masks
+        if action_masks is not None:
+            if isinstance(action_masks, list):
+                # Check if all items are tensors
+                if all(isinstance(mask, th.Tensor) for mask in action_masks):
+                    processed_masks = th.stack(action_masks)
+                else:
+                    # Convert non-tensor items to tensors
+                    processed_masks = th.stack([
+                        mask if isinstance(mask, th.Tensor) else th.tensor(mask, device=self.device)
+                        for mask in action_masks
+                    ])
             else:
-                # Handle mismatch in batch sizes
-                processed_masks = action_masks[:len(obs)]
+                # Direct tensor input
+                processed_masks = action_masks
 
         # Get action distribution
         dist = self.actor(obs, processed_masks)
