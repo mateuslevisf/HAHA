@@ -52,6 +52,62 @@ EVAL_INTERVAL = 50
 SAVE_DIR = "./mappo_models"
 # ================================
 
+# Define a function to get the appropriate device
+def get_optimal_device():
+    """
+    Get the optimal available device in this priority order:
+    1. CUDA (NVIDIA GPU)
+    2. MPS (Apple Silicon GPU)
+    3. CPU (fallback)
+    """
+    if th.cuda.is_available():
+        device = th.device("cuda")
+        print(f"CUDA GPU is available! Using {th.cuda.get_device_name(0)} for training.")
+        print(f"CUDA device count: {th.cuda.device_count()}")
+        # Set seeds for reproducibility
+        th.cuda.manual_seed(42)
+        # Optional: Print memory info
+        print(f"GPU memory allocated: {th.cuda.memory_allocated(0) / 1024**2:.2f} MB")
+        print(f"GPU memory reserved: {th.cuda.memory_reserved(0) / 1024**2:.2f} MB")
+        return device
+    elif hasattr(th, 'backends') and hasattr(th.backends, 'mps') and th.backends.mps.is_available():
+        device = th.device("mps")
+        print("MPS (Apple Silicon GPU) is available! Using M4 MAX for training.")
+        # Set environment variables for better MPS performance
+        import os
+        os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
+        # Set seeds for reproducibility
+        if hasattr(th.mps, 'manual_seed'):
+            th.mps.manual_seed(42)
+        return device
+    else:
+        print("No GPU acceleration available. Falling back to CPU.")
+        return th.device("cpu")
+
+# Tune performance based on selected device
+def tune_performance(device):
+    """
+    Apply device-specific performance optimizations
+    """
+    if device.type == "cuda":
+        # CUDA-specific optimizations
+        th.backends.cudnn.benchmark = True  # Can speed up training if input sizes don't change
+        # Use TF32 precision on Ampere or newer GPUs (faster with minimal precision loss)
+        if hasattr(th.backends.cudnn, 'allow_tf32'):
+            th.backends.cudnn.allow_tf32 = True
+        if hasattr(th, 'set_float32_matmul_precision'):
+            th.set_float32_matmul_precision('high')  # Options: 'highest', 'high', 'medium'
+
+    elif device.type == "mps":
+        # MPS-specific optimizations for Apple Silicon
+        # Currently limited options, but this function can be expanded as MPS support improves
+        pass
+
+    # Set global precision if needed
+    # th.set_default_dtype(th.float32)  # Use float32 for better numerical stability
+
+    print(f"Performance tuning applied for {device.type}")
+    return True
 
 def create_haha_from_mappo_policy(worker, policy, args, name="haha_mappo"):
     """
@@ -142,6 +198,11 @@ def main():
 
     # Get default arguments from the codebase
     args = get_arguments()
+
+    # Set the device to the optimal available option (CUDA > MPS > CPU)
+    args.device = get_optimal_device()
+    tune_performance(args.device)
+    print(f"Using device: {args.device}")
 
     # Update args with our hardcoded values
     args.hidden_size = HIDDEN_SIZE

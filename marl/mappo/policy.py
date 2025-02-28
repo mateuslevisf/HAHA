@@ -30,6 +30,14 @@ class MAPPOPolicy:
         self.agent_idx = agent_idx
         self.device = device
 
+        self.device = device
+        if device.type == 'cuda' and not th.cuda.is_available():
+            print("Warning: CUDA device requested but not available. Falling back to CPU.")
+            self.device = th.device("cpu")
+        elif device.type == 'mps' and (not hasattr(th.backends, 'mps') or not th.backends.mps.is_available()):
+            print("Warning: MPS device requested but not available. Falling back to CPU.")
+            self.device = th.device("cpu")
+
         # Determine observation dimension
         if 'visual_obs' in obs_space.spaces:
             obs_shape = obs_space.spaces['visual_obs'].shape
