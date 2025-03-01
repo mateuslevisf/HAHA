@@ -311,15 +311,22 @@ class MAPPOTrainer:
         return metrics
 
     def save_training_metrics(self):
-        """Save training metrics as plots"""
+        """Save training metrics as plots, including evaluation rewards if available"""
         # Create figure for rewards
         plt.figure(figsize=(10, 6))
-        plt.plot(self.training_metrics['iterations'], self.training_metrics['mean_rewards'], 'b-')
-        plt.title('Mean Reward per Iteration')
+        plt.plot(self.training_metrics['iterations'], self.training_metrics['mean_rewards'], 'b-', label='Training Rewards')
+
+        # Add evaluation rewards if available
+        if 'eval_rewards' in self.training_metrics and len(self.training_metrics['eval_rewards']) > 0:
+            plt.plot(self.training_metrics['eval_iterations'], self.training_metrics['eval_rewards'], 'r-',
+                    marker='o', markersize=4, label='Evaluation Rewards')
+
+        plt.title('Rewards per Iteration')
         plt.xlabel('Iterations')
-        plt.ylabel('Mean Reward')
+        plt.ylabel('Reward')
+        plt.legend()
         plt.grid(True)
-        plt.savefig(os.path.join(self.logs_dir, 'mean_rewards.png'))
+        plt.savefig(os.path.join(self.logs_dir, 'rewards.png'))
         plt.close()
 
         # Create figure for losses
@@ -352,12 +359,12 @@ class MAPPOTrainer:
 
     def train(self, total_timesteps, log_interval=100, eval_interval=1000):
         """
-        Train the MAPPO policies with tqdm progress tracking and visualization
+        Train the MAPPO policies with evaluation and best model saving
 
         Args:
             total_timesteps: Total number of timesteps to train for
             log_interval: Interval for logging metrics
-            eval_interval: Interval for evaluation
+            eval_interval: Interval for evaluation and potential model saving
 
         Returns:
             policies: Trained policies
@@ -371,6 +378,10 @@ class MAPPOTrainer:
 
         # Track start time
         start_time = time.time()
+
+        # Track best evaluation score for model saving
+        best_eval_reward = float('-inf')
+        best_model_path = os.path.join(self.args.save_dir, "best_model")
 
         while timesteps_so_far < total_timesteps:
             # Collect rollouts
@@ -414,18 +425,107 @@ class MAPPOTrainer:
                 if iterations > 0:
                     self.save_training_metrics()
 
+            # Evaluate and save best model
+            if iterations % eval_interval == 0:
+                # Run evaluation with deterministic policy
+                eval_reward = self.evaluate_policies(n_episodes=5)
+                print(f"\nEvaluation at iteration {iterations}: {eval_reward:.2f}")
+
+                # Track evaluation performance
+                if 'eval_rewards' not in self.training_metrics:
+                    self.training_metrics['eval_rewards'] = []
+                    self.training_metrics['eval_iterations'] = []
+
+                self.training_metrics['eval_rewards'].append(eval_reward)
+                self.training_metrics['eval_iterations'].append(iterations)
+
+                # Save best model
+                if eval_reward > best_eval_reward:
+                    best_eval_reward = eval_reward
+                    print(f"New best model with reward: {best_eval_reward:.2f}, saving...")
+
+                    # Save best model
+                    os.makedirs(best_model_path, exist_ok=True)
+                    self.save(best_model_path)
+
+                    # Save best score info
+                    with open(os.path.join(best_model_path, "best_score.txt"), "w") as f:
+                        f.write(f"Iteration: {iterations}\n")
+                        f.write(f"Timesteps: {timesteps_so_far}\n")
+                        f.write(f"Eval reward: {best_eval_reward}\n")
+
             iterations += 1
 
         # Close progress bar
         pbar.close()
 
+        # Final evaluation
+        final_eval_reward = self.evaluate_policies(n_episodes=10)
+        print(f"\nFinal evaluation: {final_eval_reward:.2f}")
+
         # Final save of training metrics
         self.save_training_metrics()
 
+        # Final model save (if it's better than previous best)
+        if final_eval_reward > best_eval_reward:
+            self.save(best_model_path)
+
         print(f"\nTraining completed in {(time.time() - start_time) / 60:.2f} minutes")
-        print(f"Final mean reward: {self.training_metrics['mean_rewards'][-1]:.2f}")
+        print(f"Best evaluation reward: {best_eval_reward:.2f}")
+        print(f"Final evaluation reward: {final_eval_reward:.2f}")
 
         return self.policies
+
+    def evaluate_policies(self, n_episodes=5):
+        """
+        Evaluate policies using deterministic action selection
+
+        Args:
+            n_episodes: Number of episodes to evaluate over
+
+        Returns:
+            float: Mean reward across evaluation episodes
+        """
+        # Store original state to restore after evaluation
+        eval_obs = self.env.reset()
+
+        total_rewards = []
+
+        for _ in range(n_episodes):
+            obs_a = eval_obs['agent_0']
+            obs_b = eval_obs['agent_1']
+
+            episode_reward = 0
+            done = False
+
+            while not done:
+                # Get action masks
+                action_masks = self.env.action_masks()
+
+                # Sample actions deterministically
+                action_a, _, _ = self.policies[0].act(obs_a, action_masks[0], deterministic=True)
+                action_b, _, _ = self.policies[1].act(obs_b, action_masks[1], deterministic=True)
+
+                # Execute actions in environment
+                next_obs, rewards, done, _ = self.env.step((action_a[0], action_b[0]))
+
+                # Update episode reward (average of both agents since it's cooperative)
+                episode_reward += sum(rewards) / 2
+
+                # Update observations
+                obs_a = next_obs['agent_0']
+                obs_b = next_obs['agent_1']
+
+            # Record episode reward
+            total_rewards.append(episode_reward)
+
+            # Reset for next episode
+            eval_obs = self.env.reset()
+
+        # Calculate mean reward
+        mean_eval_reward = sum(total_rewards) / len(total_rewards)
+
+        return mean_eval_reward
 
     def save(self, path):
         """
