@@ -173,6 +173,13 @@ def create_haha_from_mappo_policy(worker, policy, args, name="haha_mappo"):
 
             return action.cpu().numpy()
 
+        def save(self, path):
+            """Save the policy to the specified path"""
+            # Create directory if it doesn't exist
+            os.makedirs(path, exist_ok=True)
+            # Save actor network
+            th.save(self.policy.actor.state_dict(), os.path.join(path, "actor.pt"))
+
     # Create the wrapper
     manager = MAPPOPolicyWrapper(policy)
 
