@@ -38,8 +38,8 @@ WORKER_B_PATH = 'agent_models_ICML/HAHA_fcp_61/worker'   # REPLACE WITH ACTUAL P
 
 # Training parameters
 HIDDEN_SIZE = 64
-LR_ACTOR = 3e-3
-LR_CRITIC = 1e-2
+LR_ACTOR = 3e-2
+LR_CRITIC = 1e-1
 BUFFER_SIZE = 2048
 GAMMA = 0.99
 GAE_LAMBDA = 0.95

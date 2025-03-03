@@ -15,7 +15,7 @@ class ActorNetwork(nn.Module):
 
         def init_(m):
             if isinstance(m, nn.Linear):
-                init_method(m.weight, 0.01)
+                init_method(m.weight, gain=1.0)  # Increase gain from 0.01
                 nn.init.constant_(m.bias, 0)
             return m
 
