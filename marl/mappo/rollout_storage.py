@@ -159,10 +159,9 @@ class RolloutStorage:
             # Process other data
             data[f'agent_{agent_idx}_actions'] = th.tensor(self.actions[agent_idx], device=self.device)
             data[f'agent_{agent_idx}_log_probs'] = th.tensor(self.log_probs[agent_idx], device=self.device)
-            values_array = np.array(self.values[agent_idx])
-            data[f'agent_{agent_idx}_values'] = th.tensor(values_array, device=self.device)
+            data[f'agent_{agent_idx}_values'] = th.tensor(np.array(self.values[agent_idx]), device=self.device)
             data[f'agent_{agent_idx}_returns'] = th.tensor(np.array(self.returns[agent_idx]), device=self.device)
-            data[f'agent_{agent_idx}_advantages'] = th.tensor(self.advantages[agent_idx], device=self.device)
+            data[f'agent_{agent_idx}_advantages'] = th.tensor(np.array(self.advantages[agent_idx]), device=self.device)
 
         # Process centralized observations for critic
         cent_obs = []

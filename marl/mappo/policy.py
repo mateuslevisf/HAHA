@@ -173,7 +173,7 @@ class MAPPOPolicy:
 
     def update(self, rollout_data, clip_range=0.2, value_loss_coef=0.5, entropy_coef=0.01):
         """
-        Update actor network using PPO with detailed debugging
+        Update actor network using PPO
 
         Args:
             rollout_data: Data from rollout storage
@@ -193,73 +193,33 @@ class MAPPOPolicy:
         old_log_probs = rollout_data[f'{agent_key}_log_probs']
         advantages = rollout_data[f'{agent_key}_advantages']
 
-        # Make sure we have data to process
-        if len(obs) == 0:
-            return 0.0, 0.0  # Return zeros if no data
-
         # Normalize advantages
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
-        # Re-evaluate actions with the current policy
-        log_probs, entropy = self.evaluate_actions(obs, actions, action_masks)
+        # Re-evaluate actions - make sure obs and action_masks are properly processed
+        if len(obs) > 0:  # Make sure there are observations
+            log_probs, entropy = self.evaluate_actions(obs, actions, action_masks)
 
-        # Print diagnostic info about probabilities and advantages
-        print(f"Agent {self.agent_idx} - Policy update diagnostics:")
-        print(f"  Advantages min/max/mean: {advantages.min().item():.4f}/{advantages.max().item():.4f}/{advantages.mean().item():.4f}")
-        print(f"  Log probs min/max/mean: {log_probs.min().item():.4f}/{log_probs.max().item():.4f}/{log_probs.mean().item():.4f}")
-        print(f"  Old log probs min/max/mean: {old_log_probs.min().item():.4f}/{old_log_probs.max().item():.4f}/{old_log_probs.mean().item():.4f}")
+            # Calculate PPO loss
+            ratio = th.exp(log_probs - old_log_probs)
+            surr1 = ratio * advantages
+            surr2 = th.clamp(ratio, 1.0 - clip_range, 1.0 + clip_range) * advantages
 
-        # Calculate importance sampling ratio
-        ratio = th.exp(log_probs - old_log_probs)
+            # Actor loss (negative because we're maximizing)
+            actor_loss = -th.min(surr1, surr2).mean()
 
-        # Print ratio statistics to help diagnose issues
-        print(f"  Ratio min/max/mean: {ratio.min().item():.4f}/{ratio.max().item():.4f}/{ratio.mean().item():.4f}")
+            # Update actor
+            self.actor_optimizer.zero_grad()
+            total_loss = actor_loss - entropy_coef * entropy
+            total_loss.backward()
+            # Clip gradient norm
+            th.nn.utils.clip_grad_norm_(self.actor.parameters(), max_norm=0.5)
+            self.actor_optimizer.step()
 
-        # Calculate surrogate losses
-        surr1 = ratio * advantages
-        surr2 = th.clamp(ratio, 1.0 - clip_range, 1.0 + clip_range) * advantages
-
-        # Print clipping statistics
-        clipped = (ratio < 1.0 - clip_range) | (ratio > 1.0 + clip_range)
-        print(f"  Clipped ratios: {clipped.sum().item()}/{len(ratio)} ({clipped.sum().item()/len(ratio)*100:.2f}%)")
-
-        # Actor loss (negative because we're maximizing)
-        actor_loss = -th.min(surr1, surr2).mean()
-        print(f"  Actor loss (before update): {actor_loss.item():.6f}")
-
-        # Calculate total loss
-        total_loss = actor_loss - entropy_coef * entropy
-        print(f"  Entropy: {entropy.item():.6f}, Entropy coef: {entropy_coef}")
-        print(f"  Total loss: {total_loss.item():.6f}")
-
-        # Update actor
-        self.actor_optimizer.zero_grad()
-        total_loss.backward()
-
-        # Check for non-zero gradients
-        has_grad = any(p.grad is not None and p.grad.abs().sum() > 0 for p in self.actor.parameters())
-        if not has_grad:
-            print("  WARNING: No gradients are flowing - policy is not learning!")
-
-        # Get gradient norm before clipping
-        grad_norm = th.nn.utils.clip_grad_norm_(self.actor.parameters(), max_norm=0.5)
-        print(f"  Gradient norm: {grad_norm.item():.6f}")
-
-        # Update parameters
-        self.actor_optimizer.step()
-
-        # Get loss after update to verify improvement
-        with th.no_grad():
-            new_log_probs, new_entropy = self.evaluate_actions(obs, actions, action_masks)
-            new_ratio = th.exp(new_log_probs - old_log_probs)
-            new_surr1 = new_ratio * advantages
-            new_surr2 = th.clamp(new_ratio, 1.0 - clip_range, 1.0 + clip_range) * advantages
-            new_actor_loss = -th.min(new_surr1, new_surr2).mean()
-            print(f"  Actor loss (after update): {new_actor_loss.item():.6f}")
-            loss_improvement = actor_loss.item() - new_actor_loss.item()
-            print(f"  Loss improvement: {loss_improvement:.6f}")
-
-        return actor_loss.item(), entropy.item()
+            return actor_loss.item(), entropy.item()
+        else:
+            # Return zeros if no data
+            return 0.0, 0.0
 
     def update_critic(self, centralized_obs, returns, clip_range=0.2, value_loss_coef=0.5):
         """
