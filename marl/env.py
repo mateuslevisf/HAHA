@@ -152,7 +152,7 @@ class MAHAHAEnv(OvercookedGymEnv):
         subtask_completed = [False, False]
 
         # Execute workers for up to max_worker_steps or until both subtasks are completed
-        for _ in range(self.max_worker_steps):
+        for step_count in range(self.max_worker_steps):
             # Only execute worker for agents with non-completed subtasks
             for p_idx in [0, 1]:
                 if subtask_completed[p_idx]:
@@ -173,6 +173,12 @@ class MAHAHAEnv(OvercookedGymEnv):
             # Execute joint action in environment
             prev_state = deepcopy(self.state)
             self.state, reward, done, info = self.env.step(joint_action)
+
+            # if reward != 0:
+            #     print(f"Step {step_count}: Reward {reward}")
+            #     print(f"Joint action: {joint_action}")
+            #     print(f"Subtasks: {self.curr_subtasks}")
+            #     print(f"Prev subtasks: {self.prev_subtasks}")
 
             # Add to cumulative reward
             cumulative_reward += reward

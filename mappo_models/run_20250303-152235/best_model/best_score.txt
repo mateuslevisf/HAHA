@@ -1,3 +1,0 @@
-Iteration: 50
-Timesteps: 104448
-Eval reward: 11.409999999999991

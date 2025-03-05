@@ -200,10 +200,22 @@ class MAPPOPolicy:
         if len(obs) > 0:  # Make sure there are observations
             log_probs, entropy = self.evaluate_actions(obs, actions, action_masks)
 
-            # Calculate PPO loss
+            # Added debugging
             ratio = th.exp(log_probs - old_log_probs)
+            # print(f"Log probs: min={log_probs.min().item()}, max={log_probs.max().item()}, mean={log_probs.mean().item()}")
+            # print(f"Old log probs: min={old_log_probs.min().item()}, max={old_log_probs.max().item()}, mean={old_log_probs.mean().item()}")
+            # print(f"Ratio: min={ratio.min().item()}, max={ratio.max().item()}, mean={ratio.mean().item()}")
+            # print(f"Advantages: min={advantages.min().item()}, max={advantages.max().item()}, mean={advantages.mean().item()}, std={advantages.std().item()}")
+
             surr1 = ratio * advantages
             surr2 = th.clamp(ratio, 1.0 - clip_range, 1.0 + clip_range) * advantages
+
+            # print(f"Surr1: min={surr1.min().item()}, max={surr1.max().item()}, mean={surr1.mean().item()}")
+            # print(f"Surr2: min={surr2.min().item()}, max={surr2.max().item()}, mean={surr2.mean().item()}")
+
+            # Check if min operation is working as expected
+            surr_min = th.min(surr1, surr2)
+            # print(f"Min operation: {(surr_min == surr1).float().mean().item() * 100}% of surr1")
 
             # Actor loss (negative because we're maximizing)
             actor_loss = -th.min(surr1, surr2).mean()

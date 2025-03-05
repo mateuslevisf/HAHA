@@ -48,7 +48,7 @@ class MAPPOTrainer:
         self.buffer_size = buffer_size
         self.n_epochs = 10
         self.clip_range = 0.2
-        self.entropy_coef = 0.05
+        self.entropy_coef = 0.001
         self.value_loss_coef = 0.5
 
         # Initialize policies for both agents
